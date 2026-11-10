@@ -930,6 +930,7 @@ class GatewayStreamEngine:
         self._user_left_vc = False
         self._status_thread = None
         self._restart_thread = None
+        self._is_restarting = False  # <--- FIX: Added flag
 
     def stop_stream(self):
         self._stop_requested.set()
@@ -956,6 +957,7 @@ class GatewayStreamEngine:
         self.stream_ever_active = False
         self._stream_recreate_attempts = 0
         self._user_left_vc = False
+        self._is_restarting = False
         if self.state.viewer_tokens:
             self.viewer_manager = ViewerManager(self.state.viewer_tokens, self.session, C)
             threading.Thread(target=self.viewer_manager.start_all,
@@ -1012,6 +1014,8 @@ class GatewayStreamEngine:
     def _recreate_voice_session(self, guild_id, channel_id):
         C = self.console
         tag = f"[{self.owner_id}]"
+        
+        self._is_restarting = True  # <--- FIX: Tell the bot we are restarting
 
         if self.ws and not self.ws.closed:
             try:
@@ -1040,6 +1044,8 @@ class GatewayStreamEngine:
                 }}))
                 C.ok("voice" + tag, f"rejoined {channel_id} for auto-restart")
             except Exception: pass
+            
+        self._is_restarting = False  # <--- FIX: Done restarting
 
     def _reconnect(self, guild_id, channel_id, can_resume=True):
         C = self.console
@@ -1219,12 +1225,17 @@ class GatewayStreamEngine:
             if str(d.get("user_id")) == str(self.user_id):
                 ac = d.get("channel_id")
                 if d.get("session_id"): self.voice_session_id = d.get("session_id")
-                if (self.voice_connected or self.stream_connected or self.stream_ever_active):
-                    if not ac or str(ac) != str(channel_id):
-                        self._user_left_vc = True
-                        self.voice_connected = self.stream_connected = False
-                        self.running = False
-                        return
+                
+                # <--- FIX: ONLY CHECK DISCONNECT IF WE AREN'T RESTARTING --->
+                if not self._is_restarting:
+                    if (self.voice_connected or self.stream_connected or self.stream_ever_active):
+                        if not ac or str(ac) != str(channel_id):
+                            self._user_left_vc = True
+                            self.voice_connected = self.stream_connected = False
+                            self.running = False
+                            return
+                # <----------------------------------------------------------->
+                
                 self._try_voice_connect(guild_id, channel_id)
         elif event_type == "VOICE_SERVER_UPDATE":
             self.voice_token = d.get("token", "")
